@@ -1,0 +1,28 @@
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8
+
+# Shell scripts follow Google's shell style guide, which is what shfmt's own
+# documentation recommends as `shfmt -i 2 -ci -bn`:
+#   https://google.github.io/styleguide/shellguide.html
+# Stating it here rather than relying on a hook default makes the choice
+# explicit and readable by shfmt, editors, and CI alike
+# (smartwatermelon/dotfiles#290).
+[*.sh]
+indent_style = space
+indent_size = 2
+switch_case_indent = true
+binary_next_line = true
+
+# Git hooks are shell scripts without a .sh extension, so the [*.sh] rule
+# above does not reach them. Covers the hooks present today plus the other
+# standard names, so a hook added later inherits this style rather than
+# silently falling through to shfmt's tab default.
+[{applypatch-msg,commit-msg,post-applypatch,post-checkout,post-commit,post-merge,post-rewrite,pre-applypatch,pre-auto-gc,pre-commit,pre-merge-commit,pre-push,pre-rebase,prepare-commit-msg,push-to-checkout}]
+indent_style = space
+indent_size = 2
+switch_case_indent = true
+binary_next_line = true
