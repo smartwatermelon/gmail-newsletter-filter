@@ -1,0 +1,191 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert");
+const { loadScript, fakeSpreadsheetApp } = require("./harness");
+
+// extractAddress_ turns a raw RFC 5322 From header into the address we store
+// in the sheet. Everything it returns is later interpolated into a Gmail
+// search query, so "what does it do with junk" is a security question, not a
+// tidiness one.
+test("extractAddress_", async (t) => {
+  const { extractAddress_ } = loadScript();
+
+  await t.test("pulls the address out of a display-name header", () => {
+    assert.strictEqual(
+      extractAddress_("NYT <news@nytimes.com>"),
+      "news@nytimes.com",
+    );
+  });
+
+  await t.test("accepts a bare address with no display name", () => {
+    assert.strictEqual(extractAddress_("news@nytimes.com"), "news@nytimes.com");
+  });
+
+  await t.test("trims surrounding whitespace", () => {
+    assert.strictEqual(
+      extractAddress_("  news@nytimes.com  "),
+      "news@nytimes.com",
+    );
+  });
+
+  await t.test("lowercases so the sheet has one row per sender", () => {
+    assert.strictEqual(
+      extractAddress_("News <NEWS@NYTimes.COM>"),
+      "news@nytimes.com",
+    );
+  });
+
+  await t.test("handles a quoted display name containing a comma", () => {
+    assert.strictEqual(
+      extractAddress_('"Smith, Bob" <bob@x.com>'),
+      "bob@x.com",
+    );
+  });
+
+  await t.test("handles an RFC 2047 encoded display name", () => {
+    assert.strictEqual(
+      extractAddress_("=?utf-8?B?TmV3cw==?= <n@x.com>"),
+      "n@x.com",
+    );
+  });
+
+  await t.test("handles trailing content after the angle brackets", () => {
+    assert.strictEqual(
+      extractAddress_("Bob <bob@x.com> (via list)"),
+      "bob@x.com",
+    );
+  });
+
+  // --- the cases that motivated this work ---
+
+  await t.test("returns null for a header with no address at all", () => {
+    // Regression: previously returned "newsletter digest", which was then
+    // written to the sheet and interpolated into a Gmail query.
+    assert.strictEqual(extractAddress_("Newsletter Digest"), null);
+  });
+
+  await t.test("returns null for an empty header", () => {
+    assert.strictEqual(extractAddress_(""), null);
+  });
+
+  await t.test("returns null rather than emitting a quote into a query", () => {
+    // A quote here would terminate the from:"..." clause and let the rest of
+    // the value act as query syntax.
+    assert.strictEqual(extractAddress_('a" OR from:"boss@work.com'), null);
+  });
+
+  await t.test("returns null for a multi-address header", () => {
+    assert.strictEqual(extractAddress_("a@x.com, b@y.com"), null);
+  });
+
+  await t.test("returns null when there is no @", () => {
+    assert.strictEqual(extractAddress_("notanaddress"), null);
+  });
+
+  await t.test("returns null for embedded whitespace", () => {
+    assert.strictEqual(extractAddress_("<two words@x.com>"), null);
+  });
+
+  // Gmail's query language uses more than the double quote. An earlier
+  // denylist blocked " and passed these, so a crafted From header on a
+  // message the user tags "to-be-filtered" reached a live from: clause —
+  // on a code path that removes INBOX, i.e. archives whatever it matches.
+  await t.test("returns null for Gmail OR-group braces", () => {
+    assert.strictEqual(
+      extractAddress_("Newsletter <{from:boss@work.com}>"),
+      null,
+    );
+  });
+
+  await t.test("returns null for a leading negation operator", () => {
+    assert.strictEqual(extractAddress_("Evil <-unsub@evil.com>"), null);
+  });
+
+  await t.test("returns null for a trailing wildcard", () => {
+    assert.strictEqual(extractAddress_("Evil <news@nytimes.com*>"), null);
+  });
+
+  await t.test("returns null for an embedded operator colon", () => {
+    assert.strictEqual(extractAddress_("Evil <a@b.com:x>"), null);
+  });
+
+  await t.test("returns null for parentheses", () => {
+    assert.strictEqual(extractAddress_("Evil <a@b.com(x)>"), null);
+  });
+
+  // Non-ASCII does not over-match, but it writes rows that can never match
+  // anything, so the user gets silent non-labelling with no diagnostic.
+  await t.test("returns null for fullwidth confusables", () => {
+    assert.strictEqual(
+      extractAddress_("<\uFF41@\uFF42.\uFF43\uFF4F\uFF4D>"),
+      null,
+    );
+  });
+
+  await t.test("returns null for a zero-width BOM", () => {
+    assert.strictEqual(extractAddress_("<a@b.com\uFEFF>"), null);
+  });
+
+  await t.test("returns null for an embedded NUL", () => {
+    assert.strictEqual(extractAddress_("<a@b.com\u0000x>"), null);
+  });
+
+  await t.test("still accepts the punctuation real addresses use", () => {
+    assert.strictEqual(
+      extractAddress_("<no-reply+tag.x@mail.example.co.uk>"),
+      "no-reply+tag.x@mail.example.co.uk",
+    );
+  });
+});
+
+// The padding rule is deliberately not String.prototype.trim. That difference
+// is the whole reason it has a name, so it gets its own test: if someone
+// "simplifies" this to trim() later, this fails.
+test("normalizeAddressPadding_", async (t) => {
+  const { normalizeAddressPadding_ } = loadScript();
+
+  await t.test("strips ASCII padding and lowercases", () => {
+    assert.strictEqual(
+      normalizeAddressPadding_("  NEWS@NYTimes.COM \t"),
+      "news@nytimes.com",
+    );
+  });
+
+  await t.test(
+    "leaves Unicode invisibles in place for the validator to reject",
+    () => {
+      // trim() would remove these, turning an anomalous value into a clean one.
+      assert.strictEqual(
+        normalizeAddressPadding_("a@b.com\uFEFF"),
+        "a@b.com\uFEFF",
+      );
+      assert.strictEqual(
+        normalizeAddressPadding_("\u00A0a@b.com"),
+        "\u00A0a@b.com",
+      );
+    },
+  );
+});
+
+// Second line of defence: the sheet is user-editable, so a bad value can
+// arrive without ever passing through extractAddress_.
+test("readKnownSenders_ rejects rows that are not valid addresses", () => {
+  const SpreadsheetApp = fakeSpreadsheetApp([
+    ["email", "added"],
+    ["good@example.com", new Date()],
+    ["newsletter digest", new Date()], // no @ — hand-typed junk
+    ['a" OR from:"boss@work.com', new Date()], // quote injection
+    ["  MiXeD@Example.COM  ", new Date()], // valid, needs normalising
+    ["", new Date()], // blank row
+  ]);
+
+  const { readKnownSenders_ } = loadScript({ SpreadsheetApp });
+  const senders = readKnownSenders_();
+
+  assert.deepStrictEqual(
+    [...senders].sort(),
+    ["good@example.com", "mixed@example.com"],
+    "only well-formed addresses survive, normalised to lowercase",
+  );
+});
