@@ -128,7 +128,8 @@ function processQueue_(targetLabelId) {
       // Safe to clear now that the sender is recorded; the per-sender pass
       // below will label this message (and everything else from that sender)
       // on this same run.
-      Gmail.Users.Messages.modify('me', m.id, { removeLabelIds: [triggerLabelId] });
+      // Advanced service signature is modify(resource, userId, id): body first.
+      Gmail.Users.Messages.modify({ removeLabelIds: [triggerLabelId] }, 'me', m.id);
     });
     pageToken = resp.nextPageToken;
   } while (pageToken);
@@ -157,10 +158,11 @@ function labelFromKnownSenders_(targetLabelId) {
         const full = Gmail.Users.Messages.get('me', m.id, { format: 'minimal' });
         const labelIds = full.labelIds || [];
         if (labelIds.indexOf(targetLabelId) !== -1) return; // already done
-        Gmail.Users.Messages.modify('me', m.id, {
-          addLabelIds: [targetLabelId, updatesId],
-          removeLabelIds: [inboxId, spamId],
-        });
+        Gmail.Users.Messages.modify(
+          { addLabelIds: [targetLabelId, updatesId], removeLabelIds: [inboxId, spamId] },
+          'me',
+          m.id,
+        );
       });
       pageToken = shouldContinuePaging_(fetched, MAX_MESSAGES_PER_ADDRESS_PER_RUN, resp.nextPageToken)
         ? resp.nextPageToken

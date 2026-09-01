@@ -118,7 +118,12 @@ literals. Do not "normalize" the hardcoded ones into name lookups — the lookup
 would fail.
 
 Everything uses the **Gmail advanced service** (`Gmail.Users.Messages.*`), not the
-built-in `GmailApp`. It requires `enabledAdvancedServices` in the manifest and is
+built-in `GmailApp`. Methods that send a request body take it as the **first**
+argument: `Messages.modify(resource, 'me', id)`. Methods without a body take
+`'me'` first: `Messages.list('me', opts)`, `Messages.get('me', id, opts)`.
+Passing `'me'` first to `modify` sends the string as the JSON body and fails
+with "Invalid JSON payload received"; this shipped once and was only caught
+in production because the harness stubs no I/O. It requires `enabledAdvancedServices` in the manifest and is
 enabled via Services (+) in the editor. The two are not interchangeable: message
 IDs, label semantics, and quota accounting differ. Do not mix them in one code path.
 
