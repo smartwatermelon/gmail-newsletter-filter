@@ -25,7 +25,7 @@ checking it exists first.
 ## Commands
 
 ```bash
-npm test     # node --test test/  — 39 unit tests, no deps
+npm test     # node --test  — 39 unit tests, no deps
 npm run check  # syntax-only parse of the .gs file
 ```
 
@@ -37,8 +37,15 @@ Run a single test file or one case:
 
 ```bash
 node --test test/address.test.js
-node --test --test-name-pattern 'quote' test/
+node --test --test-name-pattern 'quote'
 ```
+
+Note the bare `node --test` with no path argument. Passing the directory as
+`node --test test/` works on Node 20 but fails on Node 22+ with
+`Cannot find module '.../test'` — the argument is resolved as a module to run,
+not a directory to scan. Bare `--test` uses Node's own test-file discovery and
+finds all 39 tests on Node 20, 22, and 24. A glob like `test/*.test.js` is also
+wrong: it silently reports 38.
 
 ## How the tests reach a non-module
 
