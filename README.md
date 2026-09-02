@@ -80,7 +80,7 @@ The script is one file with no build step. It is pasted verbatim into the Apps
 Script editor, so the file you edit is the file that runs.
 
 ```bash
-npm test      # 39 unit tests via node --test, zero dependencies
+npm test      # 49 unit tests via node --test, zero dependencies
 npm run check # syntax-only parse of the .gs file
 ```
 
@@ -91,9 +91,9 @@ globals are `Proxy` traps that throw, so a test that accidentally reaches the
 Gmail API fails loudly instead of quietly passing.
 
 Tests cover the pure-logic section of the file — address extraction and
-validation, query construction, and pagination. That section is deliberately
-separated from the I/O below it, and new logic belongs on the pure side of the
-line wherever it can go there.
+validation, query construction, pagination, and the `SHEET_ID` configuration
+check. That section is deliberately separated from the I/O below it, and new
+logic belongs on the pure side of the line wherever it can go there.
 
 Because the tests stub all I/O, they cannot catch a mistake in how the Gmail
 API itself is called. One such bug did reach production. See

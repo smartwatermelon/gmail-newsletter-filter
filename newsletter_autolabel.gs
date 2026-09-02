@@ -52,8 +52,27 @@ const TARGET_LABEL_NAME = '.Newsletters';
 const BACKFILL_QUERY_SUFFIX = 'in:anywhere'; // add e.g. ' newer_than:2y' to cap history
 const MAX_MESSAGES_PER_ADDRESS_PER_RUN = 200; // safety cap per sender per run
 
+/**
+ * Fail loudly if SHEET_ID was never filled in.
+ *
+ * Throws rather than logging: both callers would otherwise go on to do real
+ * work against a Sheet that does not exist, and a triggered run reports a
+ * thrown exception through Apps Script's own failure email. A Logger.log here
+ * would be visible only to someone already reading the execution log.
+ */
+function assertConfigured_() {
+  if (!isConfiguredSheetId_(SHEET_ID)) {
+    throw new Error(
+      'SHEET_ID is not set. Open this script in the Apps Script editor and ' +
+        'replace the SHEET_ID placeholder with your Sheet id — the long ' +
+        'string in the Sheet URL between /d/ and /edit.',
+    );
+  }
+}
+
 // ---- SETUP (run once manually) ----
 function setup() {
+  assertConfigured_();
   initSheet_();
   removeExistingTriggers_();
   ScriptApp.newTrigger('runNewsletterAutoLabel')
@@ -83,6 +102,7 @@ function removeExistingTriggers_() {
 
 // ---- MAIN ENTRY POINT (runs on the timer) ----
 function runNewsletterAutoLabel() {
+  assertConfigured_();
   const targetLabelId = getLabelIdByName_(TARGET_LABEL_NAME);
   if (!targetLabelId) {
     Logger.log('ERROR: label "%s" not found.', TARGET_LABEL_NAME);
@@ -137,6 +157,16 @@ function processQueue_(targetLabelId) {
 
 // Step 2: for every known sender, label matching mail that isn't labeled yet.
 function labelFromKnownSenders_(targetLabelId) {
+  // The caller checks this and returns early, so this is defensive. It stays
+  // because of the specific damage a null id would do: labelIds.indexOf(null)
+  // never matches, so the "already labelled" skip stops working and every
+  // message from every known sender is modified again on every run — with
+  // null in addLabelIds — pulling mail out of the inbox on a loop.
+  if (!targetLabelId) {
+    Logger.log('ERROR: labelFromKnownSenders_ called with no targetLabelId; skipping.');
+    return;
+  }
+
   const addresses = readKnownSenders_();
   const inboxId = 'INBOX';
   const spamId = 'SPAM';
@@ -265,6 +295,25 @@ function buildSenderQuery_(address, suffix) {
 function shouldContinuePaging_(fetched, cap, nextPageToken) {
   if (!nextPageToken) return false;
   return fetched < cap;
+}
+
+/**
+ * True if SHEET_ID has actually been filled in.
+ *
+ * The file ships with the placeholder and is expected to keep it in the repo,
+ * so "pasted the script, skipped the SHEET_ID step, ran setup()" is a normal
+ * mistake rather than an exotic one. Without this check the first symptom is
+ * whatever SpreadsheetApp.openById() throws for a non-existent document, which
+ * says nothing about the step that was missed.
+ *
+ * Takes the id as an argument, not from the global, so it stays on the tested
+ * side of the line — top-level const is unreachable from the sandbox.
+ */
+function isConfiguredSheetId_(sheetId) {
+  if (typeof sheetId !== 'string') return false;
+  const trimmed = sheetId.trim();
+  if (!trimmed) return false;
+  return trimmed.toUpperCase() !== 'PUT_YOUR_SHEET_ID_HERE';
 }
 
 // ---- sheet + Gmail helpers ----
