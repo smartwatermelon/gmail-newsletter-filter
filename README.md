@@ -9,6 +9,8 @@ splitting it across several filters — makes the rule set harder to reason abou
 than the problem it solves. This replaces "add another OR clause to a filter"
 with "add a row to a sheet," and the row gets added for you.
 
+More about the why: [projectinsomnia.com/blog/gmail-filter-character-limit](https://projectinsomnia.com/blog/gmail-filter-character-limit/)
+
 ## How it works
 
 Tag a stray newsletter with the Gmail label `to-be-filtered`. Within 15
