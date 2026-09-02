@@ -25,7 +25,7 @@ checking it exists first.
 ## Commands
 
 ```bash
-npm test     # node --test test/  — 39 unit tests, no deps
+npm test     # node --test  — 49 unit tests, no deps
 npm run check  # syntax-only parse of the .gs file
 ```
 
@@ -37,8 +37,15 @@ Run a single test file or one case:
 
 ```bash
 node --test test/address.test.js
-node --test --test-name-pattern 'quote' test/
+node --test --test-name-pattern 'quote'
 ```
+
+Note the bare `node --test` with no path argument. Passing the directory as
+`node --test test/` works on Node 20 but fails on Node 22+ with
+`Cannot find module '.../test'` — the argument is resolved as a module to run,
+not a directory to scan. Bare `--test` uses Node's own test-file discovery and
+finds all 49 tests on Node 20, 22, and 24. A glob like `test/*.test.js` is also
+wrong: it silently reports 38.
 
 ## How the tests reach a non-module
 
@@ -92,7 +99,7 @@ one-time backfill for a newly added sender.
 **The file is split into a pure section and an I/O section.** Everything under
 `// ---- pure logic (unit-tested; see test/) ----` touches no API and is covered
 by tests: `normalizeAddressPadding_`, `isValidSenderAddress_`, `extractAddress_`, `buildSenderQuery_`,
-`shouldContinuePaging_`. The functions below it are thin wrappers that call
+`shouldContinuePaging_`, `isConfiguredSheetId_`. The functions below it are thin wrappers that call
 those. Keep new logic on the pure side of that line wherever it can go there.
 
 **`extractAddress_` returns `null` on anything malformed, and callers must
@@ -109,6 +116,20 @@ why `shouldContinuePaging_` takes `fetched`. Counting modifications meant a
 sender whose mail was already labelled never incremented the counter and
 paginated through their whole archive at one API read per message — the most
 likely way to hit the ~6 minute limit.
+
+**`SHEET_ID` is guarded at both entry points.** `assertConfigured_()` throws
+when the placeholder is still in place, and `setup()` and
+`runNewsletterAutoLabel()` both call it. It throws rather than logging because
+a triggered run surfaces a thrown exception through Apps Script's own failure
+email, while a `Logger.log` is seen only by someone already reading the
+execution log. The predicate `isConfiguredSheetId_` takes the id as an argument
+so it stays unit-testable — top-level `const` is unreachable from the sandbox.
+
+**`labelFromKnownSenders_` re-checks `targetLabelId` even though its caller
+already did.** That guard is not redundant defensive noise: a null id makes
+`labelIds.indexOf(null)` never match, so the "already labelled" skip stops
+working and every message from every known sender is modified again on every
+run, with `null` in `addLabelIds` — pulling mail out of the inbox on a loop.
 
 **Two label ID spaces coexist in the same `labelIds` array, and this is correct.**
 User labels (`.Newsletters`, `to-be-filtered`) have opaque IDs that must be

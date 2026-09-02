@@ -4,7 +4,7 @@
   "private": true,
   "description": "Google Apps Script that auto-labels newsletters from a sender list kept in a Google Sheet",
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test",
     "check": "node -e 'new (require(\"vm\").Script)(require(\"fs\").readFileSync(\"newsletter_autolabel.gs\",\"utf8\"),{filename:\"newsletter_autolabel.gs\"}); console.log(\"syntax OK\")'"
   },
   "engines": {
