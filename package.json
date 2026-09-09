@@ -8,7 +8,7 @@
     "check": "node -e 'new (require(\"vm\").Script)(require(\"fs\").readFileSync(\"newsletter_autolabel.gs\",\"utf8\"),{filename:\"newsletter_autolabel.gs\"}); console.log(\"syntax OK\")'"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "license": "MIT"
 }
