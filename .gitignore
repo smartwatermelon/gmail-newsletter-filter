@@ -1,1 +1,4 @@
 .claude/
+
+# Agent context files are not project content (smartwatermelon/dev-env#155).
+AGENTS.md
