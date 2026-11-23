@@ -74,6 +74,18 @@ All settings live at the top of `newsletter_autolabel.gs`.
 | `BACKFILL_QUERY_SUFFIX` | `in:anywhere` | How far back to search. Narrow it to cap history. |
 | `MAX_MESSAGES_PER_ADDRESS_PER_RUN` | `200` | Messages examined per sender per run. |
 | `MAX_REMOVALS_PER_RUN` | `100` | Removal requests examined per run. The rest wait for the next run. |
+| `ALERT_MIN_INTERVAL_HOURS` | `6` | Minimum hours between failure emails. |
+
+## Failure emails
+
+When a run fails, the script emails the error to the account that owns it,
+with a link to the Executions page. A failure that repeats every run sends at
+most one email per `ALERT_MIN_INTERVAL_HOURS`. The script does not rely on Apps
+Script's own failure digest, which in practice never arrived.
+
+Sending mail needs one extra permission. After you paste a version that adds
+it, run `runNewsletterAutoLabel` once from the editor and approve the prompt.
+Until you do, triggered runs fail with an authorization error.
 
 The first backfill for a high-volume sender — a newspaper with years of
 archived mail — burns Gmail API quota faster than a low-volume one. If that
@@ -90,13 +102,14 @@ The script is one file with no build step. It is pasted verbatim into the Apps
 Script editor, so the file you edit is the file that runs.
 
 ```bash
-npm test      # 71 unit tests via node --test, zero dependencies
+npm test      # 82 unit tests via node --test, zero dependencies
 npm run check # syntax-only parse of the .gs file
 ```
 
 There is no `node_modules`. The tests use Node's built-in test runner.
 `test/harness.js` reads the real `.gs` file and evaluates it in a `vm` context.
-It stubs `Gmail`, `SpreadsheetApp`, `ScriptApp`, `LockService`, and `Logger`. Un-stubbed
+It stubs `Gmail`, `SpreadsheetApp`, `ScriptApp`, `LockService`, `MailApp`,
+`PropertiesService`, `Session`, and `Logger`. Un-stubbed
 globals are `Proxy` traps that throw, so a test that accidentally reaches the
 Gmail API fails loudly instead of quietly passing.
 
