@@ -46,6 +46,7 @@ function loadScript(stubs = {}) {
     Gmail: stubs.Gmail || trap("Gmail"),
     SpreadsheetApp: stubs.SpreadsheetApp || trap("SpreadsheetApp"),
     ScriptApp: stubs.ScriptApp || trap("ScriptApp"),
+    LockService: stubs.LockService || trap("LockService"),
 
     ...stubs,
   };
@@ -82,13 +83,36 @@ function trap(name) {
  *
  * @param {Array<Array<*>>} rows initial sheet contents, header row included.
  */
-function fakeSpreadsheetApp(rows) {
+function fakeSpreadsheetApp(
+  rows,
+  { maxRows = 1000, frozenRows: initialFrozen = 1 } = {},
+) {
+  let frozenRows = initialFrozen;
   const data = rows.map((r) => r.slice());
+  let max = Math.max(maxRows, data.length);
 
   const sheet = {
     getLastRow: () => data.length,
     appendRow: (row) => data.push(row.slice()),
-    setFrozenRows: () => {},
+    deleteRow: (rowNumber) => {
+      if (rowNumber < 1 || rowNumber > max) {
+        throw new Error(`deleteRow(${rowNumber}) out of range`);
+      }
+      // Mirrors the real API's refusal to leave only frozen rows.
+      if (max - 1 <= frozenRows) {
+        throw new Error("This action would delete all non-frozen rows.");
+      }
+      if (rowNumber <= data.length) data.splice(rowNumber - 1, 1);
+      max -= 1;
+    },
+    getMaxRows: () => max,
+    getFrozenRows: () => frozenRows,
+    insertRowAfter: () => {
+      max += 1;
+    },
+    setFrozenRows: (n) => {
+      frozenRows = n;
+    },
     getRange: (startRow, startCol, numRows, numCols) => ({
       getValues: () =>
         data
