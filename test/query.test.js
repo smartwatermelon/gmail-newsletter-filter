@@ -27,6 +27,31 @@ test("buildSenderQuery_", async (t) => {
     assert.strictEqual(buildSenderQuery_("a@b.com", ""), 'from:"a@b.com"');
   });
 
+  await t.test("excludes mail that already has the target label", () => {
+    assert.strictEqual(
+      buildSenderQuery_("news@nytimes.com", "in:anywhere", ".Newsletters"),
+      'from:"news@nytimes.com" -label:.newsletters in:anywhere',
+    );
+  });
+
+  await t.test("writes spaces and slashes in a label name as dashes", () => {
+    assert.strictEqual(
+      buildSenderQuery_("a@b.com", "", "Reading/Later Pile"),
+      'from:"a@b.com" -label:reading-later-pile',
+    );
+  });
+
+  await t.test("refuses a label name that could alter the query", () => {
+    assert.throws(
+      () => buildSenderQuery_("a@b.com", "in:anywhere", 'x" OR from:*'),
+      /label name/i,
+    );
+    assert.throws(
+      () => buildSenderQuery_("a@b.com", "in:anywhere", "-negated"),
+      /label name/i,
+    );
+  });
+
   await t.test("refuses to build a query from an invalid address", () => {
     // Defence in depth: even if a bad value reaches here, it must not become
     // a query. Throwing is correct — silently returning a narrower query
