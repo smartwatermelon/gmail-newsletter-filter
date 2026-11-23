@@ -25,7 +25,7 @@ checking it exists first.
 ## Commands
 
 ```bash
-npm test     # node --test  — 67 unit tests, no deps
+npm test     # node --test  — 71 unit tests, no deps
 npm run check  # syntax-only parse of the .gs file
 ```
 
@@ -172,6 +172,11 @@ IDs, label semantics, and quota accounting differ. Do not mix them in one code p
   (200) caps per-sender work per run; `BACKFILL_QUERY_SUFFIX` caps history depth.
   Any change that adds a per-message API call multiplies against a sender's whole
   archive on first backfill.
+  Pass 3's query carries `-label:<target>`, so Gmail returns only unlabelled
+  mail and steady-state runs read almost nothing. Before that term existed,
+  every run re-read up to 200 labelled messages per sender. With 18 senders
+  that went over the 15,000 units/min/user limit, and mail past the newest 200
+  was never reached. Do not drop the term from the query.
 - **Apps Script kills executions at ~6 minutes.** Work must stay resumable across
   runs. The pagination loops and the per-sender cap exist for this reason — a run
   that hits the cap simply finishes the rest on the next 15-minute tick.

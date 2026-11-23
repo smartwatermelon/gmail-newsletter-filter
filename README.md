@@ -90,7 +90,7 @@ The script is one file with no build step. It is pasted verbatim into the Apps
 Script editor, so the file you edit is the file that runs.
 
 ```bash
-npm test      # 67 unit tests via node --test, zero dependencies
+npm test      # 71 unit tests via node --test, zero dependencies
 npm run check # syntax-only parse of the .gs file
 ```
 

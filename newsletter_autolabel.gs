@@ -277,7 +277,12 @@ function labelFromKnownSenders_(targetLabelId) {
     let fetched = 0; // messages examined — what the cap actually bounds
     do {
       const resp = Gmail.Users.Messages.list('me', {
-        q: buildSenderQuery_(address, BACKFILL_QUERY_SUFFIX),
+        // Excluding labelled mail in the query is what keeps this pass inside
+        // Gmail's per-minute quota. Without it, every run re-read up to the
+        // cap of already-labelled mail for every sender (18 senders x 200
+        // reads x 5 units went over the 15,000 units/min limit), and mail
+        // older than the newest 200 was never reached at all.
+        q: buildSenderQuery_(address, BACKFILL_QUERY_SUFFIX, TARGET_LABEL_NAME),
         maxResults: 100,
         pageToken: pageToken,
       });
@@ -287,6 +292,9 @@ function labelFromKnownSenders_(targetLabelId) {
         fetched++;
         const full = Gmail.Users.Messages.get('me', m.id, { format: 'minimal' });
         const labelIds = full.labelIds || [];
+        // The query already excludes labelled mail, so this rarely fires. It
+        // stays as the safety net if the -label: term ever stops matching
+        // (e.g. Gmail changes how it searches label names).
         if (labelIds.indexOf(targetLabelId) !== -1) return; // already done
         Gmail.Users.Messages.modify(
           { addLabelIds: [targetLabelId, updatesId], removeLabelIds: [inboxId, spamId] },
@@ -373,15 +381,39 @@ function extractAddress_(fromHeader) {
  * Single home for the from:"..." construction so the escaping rule has one
  * place to live and one place to be tested.
  *
- * @throws {Error} if the address is not valid. Throwing beats returning a
- *   narrower query, which would silently label the wrong mail.
+ * @param {string} address sender address.
+ * @param {string} suffix extra query terms, e.g. 'in:anywhere'.
+ * @param {string} [excludeLabelName] if given, adds -label:<name> so mail
+ *   that already carries that label is not returned.
+ * @throws {Error} if the address or label name is not valid. Throwing beats
+ *   returning a narrower query, which would silently label the wrong mail.
  */
-function buildSenderQuery_(address, suffix) {
+function buildSenderQuery_(address, suffix, excludeLabelName) {
   if (!isValidSenderAddress_(address)) {
     throw new Error('invalid sender address: ' + JSON.stringify(address));
   }
-  const clause = 'from:"' + address + '"';
-  return suffix ? clause + ' ' + suffix : clause;
+  const parts = ['from:"' + address + '"'];
+  if (excludeLabelName) parts.push('-label:' + labelSearchTerm_(excludeLabelName));
+  if (suffix) parts.push(suffix);
+  return parts.join(' ');
+}
+
+/**
+ * A label name in the form Gmail search expects after label:.
+ *
+ * Gmail search matches label names case-insensitively, with spaces and "/"
+ * written as "-". Verified against the live mailbox on 2026-11-23:
+ * `-label:.newsletters` excludes .Newsletters mail. Allowlisted for the same
+ * reason as isValidSenderAddress_: the result goes into a query.
+ *
+ * @throws {Error} if the name has characters outside the allowlist.
+ */
+function labelSearchTerm_(name) {
+  const term = String(name).toLowerCase().replace(/[ /]/g, '-');
+  if (!/^[a-z0-9._][a-z0-9._-]*$/.test(term)) {
+    throw new Error('label name not usable in a query: ' + JSON.stringify(name));
+  }
+  return term;
 }
 
 /**
