@@ -25,7 +25,7 @@ checking it exists first.
 ## Commands
 
 ```bash
-npm test     # node --test  — 71 unit tests, no deps
+npm test     # node --test  — 82 unit tests, no deps
 npm run check  # syntax-only parse of the .gs file
 ```
 
@@ -52,7 +52,8 @@ wrong: it silently reports fewer tests than bare `--test` does.
 `.gs` has no exports and no `require` — it is pasted verbatim into the Apps
 Script editor and runs there against globals that do not exist locally.
 `test/harness.js` therefore reads the real file and evaluates it in a `vm`
-context with `Gmail`, `SpreadsheetApp`, `ScriptApp`, `LockService`, and `Logger` stubbed.
+context with `Gmail`, `SpreadsheetApp`, `ScriptApp`, `LockService`, `MailApp`,
+`PropertiesService`, `Session`, and `Logger` stubbed.
 
 The property this buys, and the reason to keep it: **the file you edit is the
 file that runs is the file that is tested.** There is no build step and no
@@ -137,9 +138,9 @@ likely way to hit the ~6 minute limit.
 **`SHEET_ID` is guarded at both entry points.** `assertConfigured_()` throws
 when the placeholder is still in place, and `setup()` and
 `runNewsletterAutoLabel()` both call it. It throws rather than logging because
-a triggered run surfaces a thrown exception through Apps Script's own failure
-email, while a `Logger.log` is seen only by someone already reading the
-execution log. The predicate `isConfiguredSheetId_` takes the id as an argument
+a thrown exception in a triggered run reaches the failure email (see below),
+while a `Logger.log` is seen only by someone already reading the execution
+log. The predicate `isConfiguredSheetId_` takes the id as an argument
 so it stays unit-testable — top-level `const` is unreachable from the sandbox.
 
 **`labelFromKnownSenders_` re-checks `targetLabelId` even though its caller
@@ -202,5 +203,12 @@ review instincts mislead in specific ways worth checking against:
   `runNewsletterAutoLabel` or adding an underscore to it breaks the trigger, which
   references the handler by name string.
 - Errors are surfaced via `Logger.log` and visible in the editor's execution log.
-  There is no other error channel — a thrown exception in a triggered run is
-  reported only by Apps Script's own failure email.
+  A thrown exception from `runPasses_` is also emailed to the owner by
+  `notifyFailure_`, at most once per `ALERT_MIN_INTERVAL_HOURS`, then rethrown so
+  Executions still shows the run as Failed. **Apps Script's own failure digest
+  cannot be relied on:** in this deployment the trigger ran at a ~98% error rate
+  for weeks with the digest set to daily, and no email ever arrived. So anything
+  that should alert must throw, not just log. `notifyFailure_` never throws
+  itself, so a mail problem cannot mask the run's real error.
+- `runNewsletterAutoLabel` is now a thin try/catch around `runPasses_`. Keep the
+  trigger handler's name; put new pass logic in `runPasses_`.

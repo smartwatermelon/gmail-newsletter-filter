@@ -56,6 +56,7 @@ const TARGET_LABEL_NAME = '.Newsletters';
 const BACKFILL_QUERY_SUFFIX = 'in:anywhere'; // add e.g. ' newer_than:2y' to cap history
 const MAX_MESSAGES_PER_ADDRESS_PER_RUN = 200; // safety cap per sender per run
 const MAX_REMOVALS_PER_RUN = 100; // removal requests examined per run; the rest wait
+const ALERT_MIN_INTERVAL_HOURS = 6; // at most one failure email per this many hours
 
 /**
  * Fail loudly if SHEET_ID was never filled in.
@@ -106,12 +107,27 @@ function removeExistingTriggers_() {
 }
 
 // ---- MAIN ENTRY POINT (runs on the timer) ----
+//
+// Any failure emails you (at most once per ALERT_MIN_INTERVAL_HOURS), then
+// is rethrown so the Executions page still records the run as Failed.
+// This exists because Apps Script's own failure digest never arrived: the
+// trigger ran at a ~98% error rate for weeks with no email at all.
 function runNewsletterAutoLabel() {
+  try {
+    runPasses_();
+  } catch (e) {
+    notifyFailure_(e);
+    throw e;
+  }
+}
+
+function runPasses_() {
   assertConfigured_();
   const targetLabelId = getLabelIdByName_(TARGET_LABEL_NAME);
   if (!targetLabelId) {
-    Logger.log('ERROR: label "%s" not found.', TARGET_LABEL_NAME);
-    return;
+    // Thrown, not logged: without this label the run does nothing at all,
+    // and a log line alone would never reach anyone.
+    throw new Error('label "' + TARGET_LABEL_NAME + '" not found; nothing was labelled.');
   }
 
   // Order matters. Removals run after additions, so a sender tagged with both
@@ -309,6 +325,29 @@ function labelFromKnownSenders_(targetLabelId) {
   });
 }
 
+/**
+ * Email the failure to the script's owner, unless one was sent recently.
+ *
+ * Never throws: an error here must not replace the run's real error, which
+ * the caller rethrows.
+ */
+function notifyFailure_(error) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const now = Date.now();
+    const last = Number(props.getProperty('lastAlertAt')) || 0;
+    if (!shouldSendAlert_(last, now, ALERT_MIN_INTERVAL_HOURS)) {
+      Logger.log('Alert suppressed: one was sent less than %s hours ago.', ALERT_MIN_INTERVAL_HOURS);
+      return;
+    }
+    const alert = buildAlert_(error, ScriptApp.getScriptId(), ALERT_MIN_INTERVAL_HOURS);
+    MailApp.sendEmail(Session.getEffectiveUser().getEmail(), alert.subject, alert.body);
+    props.setProperty('lastAlertAt', String(now));
+  } catch (alertError) {
+    Logger.log('ERROR: could not send failure email: %s', alertError);
+  }
+}
+
 // ---- pure logic (unit-tested; see test/) ----
 // These functions touch no Gmail or Sheets API. They are the parts worth
 // testing, and test/harness.js loads this file to reach them.
@@ -453,6 +492,46 @@ function findSenderRows_(values, addresses) {
     }
   });
   return rows.reverse();
+}
+
+/**
+ * Whether enough time has passed since the last failure email to send one.
+ *
+ * A run fires every 15 minutes, so a persistent failure would otherwise
+ * send 96 emails a day. A last time in the future (clock skew, a hand-edited
+ * property) counts as "long ago" rather than suppressing alerts forever.
+ */
+function shouldSendAlert_(lastSentMs, nowMs, minIntervalHours) {
+  if (!lastSentMs || lastSentMs > nowMs) return true;
+  return nowMs - lastSentMs >= minIntervalHours * 60 * 60 * 1000;
+}
+
+/**
+ * Subject and body of the failure email.
+ *
+ * @param {*} error whatever was thrown.
+ * @param {string} scriptId from ScriptApp.getScriptId(), for the link.
+ * @param {number} minIntervalHours shown so the reader knows why there is
+ *   only one email for a failure that repeats every run.
+ */
+function buildAlert_(error, scriptId, minIntervalHours) {
+  const message = error && error.message ? error.message : String(error);
+  const stack = error && error.stack ? error.stack : '(no stack trace)';
+  return {
+    subject: 'Newsletter auto-label run failed: ' + message.slice(0, 80),
+    body: [
+      'A run of runNewsletterAutoLabel failed.',
+      '',
+      'Error: ' + message,
+      '',
+      stack,
+      '',
+      'All runs: https://script.google.com/home/projects/' + scriptId + '/executions',
+      '',
+      'If the failure repeats, you get at most one of these emails every ' +
+        minIntervalHours + ' hours.',
+    ].join('\n'),
+  };
 }
 
 /**

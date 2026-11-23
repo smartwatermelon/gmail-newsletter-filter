@@ -6,7 +6,7 @@
  *
  * Why this exists: the .gs file is not a Node module. It has no exports and
  * no require, because it is pasted verbatim into the Apps Script editor and
- * runs there against globals (Gmail, SpreadsheetApp, ScriptApp, Logger) that
+ * runs there against Apps Script globals (Gmail, SpreadsheetApp, ...) that
  * do not exist locally. Rather than keep a second, importable copy of the
  * logic — which would drift from the deployed one — the tests read the real
  * file and evaluate it in a vm context with those globals stubbed.
@@ -47,6 +47,9 @@ function loadScript(stubs = {}) {
     SpreadsheetApp: stubs.SpreadsheetApp || trap("SpreadsheetApp"),
     ScriptApp: stubs.ScriptApp || trap("ScriptApp"),
     LockService: stubs.LockService || trap("LockService"),
+    MailApp: stubs.MailApp || trap("MailApp"),
+    PropertiesService: stubs.PropertiesService || trap("PropertiesService"),
+    Session: stubs.Session || trap("Session"),
 
     ...stubs,
   };
