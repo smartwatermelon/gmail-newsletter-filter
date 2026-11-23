@@ -62,8 +62,8 @@ const ALERT_MIN_INTERVAL_HOURS = 6; // at most one failure email per this many h
  * Fail loudly if SHEET_ID was never filled in.
  *
  * Throws rather than logging: both callers would otherwise go on to do real
- * work against a Sheet that does not exist, and a triggered run reports a
- * thrown exception through Apps Script's own failure email. A Logger.log here
+ * work against a Sheet that does not exist, and a thrown exception reaches
+ * the owner through notifyFailure_'s email. A Logger.log here
  * would be visible only to someone already reading the execution log.
  */
 function assertConfigured_() {
