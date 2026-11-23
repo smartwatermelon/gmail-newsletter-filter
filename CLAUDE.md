@@ -25,7 +25,7 @@ checking it exists first.
 ## Commands
 
 ```bash
-npm test     # node --test  — 85 unit tests, no deps
+npm test     # node --test  — 88 unit tests, no deps
 npm run check  # syntax-only parse of the .gs file
 ```
 
@@ -212,5 +212,8 @@ review instincts mislead in specific ways worth checking against:
   for weeks with the digest set to daily, and no email ever arrived. So anything
   that should alert must throw, not just log. `notifyFailure_` never throws
   itself, so a mail problem cannot mask the run's real error.
+  `clearAlertThrottle_` deletes `lastAlertAt` after every successful run, so the
+  throttle spans only one continuing failure. The user must never need the
+  editor to reset it; keep that property when changing the alert code.
 - `runNewsletterAutoLabel` is now a thin try/catch around `runPasses_`. Keep the
   trigger handler's name; put new pass logic in `runPasses_`.
