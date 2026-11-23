@@ -25,7 +25,7 @@ checking it exists first.
 ## Commands
 
 ```bash
-npm test     # node --test  — 82 unit tests, no deps
+npm test     # node --test  — 85 unit tests, no deps
 npm run check  # syntax-only parse of the .gs file
 ```
 
@@ -62,7 +62,7 @@ test which accidentally reaches the Gmail API fails loudly instead of silently
 passing.
 
 Two gotchas: only `function` declarations land on the sandbox object (top-level
-`const` like `SHEET_ID` is block-scoped and unreachable — pass such values as
+`const` like `TARGET_LABEL_NAME` is block-scoped and unreachable — pass such values as
 arguments), and `test/harness.js` must be updated if the script starts using a
 new Apps Script global.
 
@@ -135,8 +135,10 @@ sender whose mail was already labelled never incremented the counter and
 paginated through their whole archive at one API read per message — the most
 likely way to hit the ~6 minute limit.
 
-**`SHEET_ID` is guarded at both entry points.** `assertConfigured_()` throws
-when the placeholder is still in place, and `setup()` and
+**`SHEET_ID` is a Script Property, guarded at both entry points.** It is read
+by `getSheetId_()`, not declared in the file, so re-pasting a new version keeps
+it. Do not add a `SHEET_ID` constant back. `assertConfigured_()` throws when the
+property is unset (or holds the old placeholder), and `setup()` and
 `runNewsletterAutoLabel()` both call it. It throws rather than logging because
 a thrown exception in a triggered run reaches the failure email (see below),
 while a `Logger.log` is seen only by someone already reading the execution
@@ -186,8 +188,8 @@ IDs, label semantics, and quota accounting differ. Do not mix them in one code p
   (already-labeled messages are skipped, known addresses are not re-appended) so
   overlap is harmless rather than prevented. The one exception is Sheet row
   deletion in `processRemovals_`, which is locked instead (see Architecture).
-- `SHEET_ID` is a placeholder (`PUT_YOUR_SHEET_ID_HERE`) and is expected to stay
-  that way in the repo. Do not commit a real Sheet ID.
+- No Sheet ID belongs in the repo. It lives only in the deployed project's
+  Script Properties.
 
 ## Reviewing changes here
 

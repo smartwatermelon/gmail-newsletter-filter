@@ -47,7 +47,10 @@ and nothing to install locally.
    `/d/` and `/edit`.
 2. In the Sheet, open **Extensions → Apps Script**. Delete the default code and
    paste the entire contents of [`newsletter_autolabel.gs`](newsletter_autolabel.gs).
-3. Set `SHEET_ID` at the top of the file to the ID from step 1.
+3. In the Apps Script editor, open **Project Settings** (the gear), then
+   **Script Properties → Add script property**. Set the property to
+   `SHEET_ID` and the value to the ID from step 1. It is stored outside the
+   code, so you never set it again when you paste a new version.
 4. In the Apps Script editor, click **Services (+)** and add **Gmail API**.
    Leave the version as-is. This is the *advanced* Gmail service, which the
    script requires; the built-in `GmailApp` is a different API and is not
@@ -62,11 +65,11 @@ It is idempotent — running it again does not create duplicate triggers.
 
 ## Configuration
 
-All settings live at the top of `newsletter_autolabel.gs`.
+The Sheet ID is a Script Property, set once in setup step 3. Everything else
+is a constant at the top of `newsletter_autolabel.gs`.
 
 | Constant | Default | What it does |
 | --- | --- | --- |
-| `SHEET_ID` | `PUT_YOUR_SHEET_ID_HERE` | The Sheet that stores sender addresses. |
 | `SHEET_TAB_NAME` | `Senders` | Tab within that Sheet. |
 | `TRIGGER_LABEL_NAME` | `.to-be-filtered` | The label you apply to teach it a sender. |
 | `REMOVAL_LABEL_NAME` | `.remove-from-filter` | The label you apply to make it forget a sender. |
@@ -102,7 +105,7 @@ The script is one file with no build step. It is pasted verbatim into the Apps
 Script editor, so the file you edit is the file that runs.
 
 ```bash
-npm test      # 82 unit tests via node --test, zero dependencies
+npm test      # 85 unit tests via node --test, zero dependencies
 npm run check # syntax-only parse of the .gs file
 ```
 
@@ -130,6 +133,13 @@ Editing this repository does not deploy anything. The deployed copy is whatever
 is currently pasted into the Sheet's Apps Script editor, so a change here
 reaches production only when someone re-pastes it. Treat the repository and the
 deployed script as two copies that drift.
+
+### Upgrading to the Script Property
+
+Earlier versions kept `SHEET_ID` as a constant in the file. This version reads
+it from Script Properties instead. Add the property once, as in setup step 3,
+using the ID from your old copy. Do this before or right after you paste. Until
+it is set, every run fails with a `SHEET_ID is not set` error.
 
 ### Upgrading from `to-be-filtered`
 

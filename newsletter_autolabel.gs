@@ -25,7 +25,10 @@
  *      between /d/ and /edit).
  *   2. In the Sheet: Extensions > Apps Script. Delete the default code,
  *      paste this whole file.
- *   3. Fill in SHEET_ID below.
+ *   3. In the Apps Script editor: Project Settings (gear) > Script
+ *      Properties > Add script property. Property: SHEET_ID. Value: the ID
+ *      from step 1. It lives outside the code, so re-pasting a new version
+ *      of this file never needs it again.
  *   4. In the Apps Script editor: Services (+) > add "Gmail API" (advanced
  *      service). Leave the version as-is.
  *   5. Run `setup` once from the editor (select it in the function dropdown,
@@ -48,7 +51,8 @@
  */
 
 // ---- CONFIG ----
-const SHEET_ID = 'PUT_YOUR_SHEET_ID_HERE';
+// SHEET_ID is not here: it is a Script Property (see SETUP step 3), read by
+// getSheetId_(), so re-pasting this file keeps it.
 const SHEET_TAB_NAME = 'Senders';
 const TRIGGER_LABEL_NAME = '.to-be-filtered';
 const REMOVAL_LABEL_NAME = '.remove-from-filter';
@@ -59,7 +63,7 @@ const MAX_REMOVALS_PER_RUN = 100; // removal requests examined per run; the rest
 const ALERT_MIN_INTERVAL_HOURS = 6; // at most one failure email per this many hours
 
 /**
- * Fail loudly if SHEET_ID was never filled in.
+ * Fail loudly if the SHEET_ID Script Property was never set.
  *
  * Throws rather than logging: both callers would otherwise go on to do real
  * work against a Sheet that does not exist, and a thrown exception reaches
@@ -67,13 +71,24 @@ const ALERT_MIN_INTERVAL_HOURS = 6; // at most one failure email per this many h
  * would be visible only to someone already reading the execution log.
  */
 function assertConfigured_() {
-  if (!isConfiguredSheetId_(SHEET_ID)) {
+  if (!isConfiguredSheetId_(getSheetId_())) {
     throw new Error(
-      'SHEET_ID is not set. Open this script in the Apps Script editor and ' +
-        'replace the SHEET_ID placeholder with your Sheet id — the long ' +
+      'SHEET_ID is not set. In the Apps Script editor open Project Settings ' +
+        '> Script Properties and add SHEET_ID with your Sheet id: the long ' +
         'string in the Sheet URL between /d/ and /edit.',
     );
   }
+}
+
+/**
+ * The Sheet id, from Script Properties.
+ *
+ * A property, not a constant in this file, so that pasting a new version of
+ * the file over the old one keeps it. Returns null when unset;
+ * assertConfigured_ turns that into a clear error.
+ */
+function getSheetId_() {
+  return PropertiesService.getScriptProperties().getProperty('SHEET_ID');
 }
 
 // ---- SETUP (run once manually) ----
@@ -89,7 +104,7 @@ function setup() {
 }
 
 function initSheet_() {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   let sheet = ss.getSheetByName(SHEET_TAB_NAME);
   if (!sheet) sheet = ss.insertSheet(SHEET_TAB_NAME);
   if (sheet.getLastRow() === 0) {
@@ -537,9 +552,10 @@ function buildAlert_(error, scriptId, minIntervalHours) {
 /**
  * True if SHEET_ID has actually been filled in.
  *
- * The file ships with the placeholder and is expected to keep it in the repo,
- * so "pasted the script, skipped the SHEET_ID step, ran setup()" is a normal
- * mistake rather than an exotic one. Without this check the first symptom is
+ * "Pasted the script, skipped the SHEET_ID step, ran setup()" is a normal
+ * mistake rather than an exotic one. An unset property arrives here as null.
+ * The old placeholder is still rejected, in case someone pastes it in as the
+ * property value from an old copy of these instructions. Without this check the first symptom is
  * whatever SpreadsheetApp.openById() throws for a non-existent document, which
  * says nothing about the step that was missed.
  *
@@ -555,7 +571,7 @@ function isConfiguredSheetId_(sheetId) {
 
 // ---- sheet + Gmail helpers ----
 function readKnownSenders_() {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName(SHEET_TAB_NAME);
   const lastRow = sheet.getLastRow();
   const set = new Set();
@@ -574,13 +590,13 @@ function readKnownSenders_() {
 }
 
 function appendSender_(address) {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName(SHEET_TAB_NAME);
   sheet.appendRow([address, new Date()]);
 }
 
 function removeSenders_(addresses) {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = ss.getSheetByName(SHEET_TAB_NAME);
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) return;
