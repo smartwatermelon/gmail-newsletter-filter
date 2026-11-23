@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert");
-const { loadScript } = require("./harness");
+const { loadScript, fakeScriptProperties } = require("./harness");
 
 const HOUR = 60 * 60 * 1000;
 
@@ -99,10 +99,40 @@ test("a mail failure does not replace the run's own error", () => {
 });
 
 test("a successful run sends nothing", () => {
-  // MailApp and PropertiesService left as traps: touching them would throw.
-  const ctx = loadScript();
+  // MailApp left as a trap: touching it would throw.
+  const props = fakeScriptProperties({});
+  const ctx = loadScript({ PropertiesService: props });
   ctx.runPasses_ = () => {};
   assert.doesNotThrow(() => ctx.runNewsletterAutoLabel());
+});
+
+test("a successful run clears the throttle, so the next failure emails", () => {
+  const props = fakeScriptProperties({ lastAlertAt: String(Date.now()) });
+  const ctx = loadScript({ PropertiesService: props });
+  ctx.runPasses_ = () => {};
+  ctx.runNewsletterAutoLabel();
+  assert.strictEqual("lastAlertAt" in props.__values, false);
+});
+
+test("a failing run keeps the throttle", () => {
+  const stubs = alertStubs({ lastAlertAt: Date.now() - 60 * 1000 });
+  const before = stubs.__props.lastAlertAt;
+  const ctx = failingRun(stubs);
+  assert.throws(() => ctx.runNewsletterAutoLabel(), /boom/);
+  assert.strictEqual(stubs.__props.lastAlertAt, before);
+});
+
+test("a property error after a successful run does not fail the run", () => {
+  const ctx = loadScript({
+    PropertiesService: {
+      getScriptProperties: () => {
+        throw new Error("properties down");
+      },
+    },
+  });
+  ctx.runPasses_ = () => {};
+  assert.doesNotThrow(() => ctx.runNewsletterAutoLabel());
+  assert.match(String(ctx.__logged[0][0]), /could not clear/);
 });
 
 test("a missing target label is thrown, so it alerts", () => {

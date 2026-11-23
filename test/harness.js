@@ -153,6 +153,9 @@ function fakeScriptProperties(values = {}) {
       setProperty: (k, v) => {
         values[k] = String(v);
       },
+      deleteProperty: (k) => {
+        delete values[k];
+      },
     }),
   };
 }

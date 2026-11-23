@@ -134,6 +134,29 @@ function runNewsletterAutoLabel() {
     notifyFailure_(e);
     throw e;
   }
+  clearAlertThrottle_();
+}
+
+/**
+ * After a successful run, forget when the last failure email went out.
+ *
+ * The throttle exists to stop one continuing failure from sending an email
+ * every 15 minutes. Once a run succeeds, that failure is over, and the next
+ * failure is news: it should email at once, not wait out the rest of an old
+ * 6-hour window. Clearing it here means nobody has to open the editor to
+ * reset it.
+ *
+ * Reads first and deletes only when set, so a healthy run costs one read.
+ * Never throws: the run itself succeeded, and a property hiccup must not turn
+ * it into a failure.
+ */
+function clearAlertThrottle_() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (props.getProperty('lastAlertAt') !== null) props.deleteProperty('lastAlertAt');
+  } catch (e) {
+    Logger.log('ERROR: could not clear the alert throttle: %s', e);
+  }
 }
 
 function runPasses_() {

@@ -79,6 +79,15 @@ is a constant at the top of `newsletter_autolabel.gs`.
 | `MAX_REMOVALS_PER_RUN` | `100` | Removal requests examined per run. The rest wait for the next run. |
 | `ALERT_MIN_INTERVAL_HOURS` | `6` | Minimum hours between failure emails. |
 
+A sender with years of archived mail, such as a newspaper, needs a large first
+backfill. That backfill uses Gmail API quota faster than a small sender does. If that
+matters to you, narrow `BACKFILL_QUERY_SUFFIX` to something like
+`in:anywhere newer_than:1y` before the first run.
+
+This script does not touch any existing native Gmail filter. Both can run at
+the same time. An address covered by both is harmless: matching mail already
+carries the label, so the script does nothing to it.
+
 ## Failure emails
 
 When a run fails, the script emails the error to the account that owns it,
@@ -86,18 +95,18 @@ with a link to the Executions page. A failure that repeats every run sends at
 most one email per `ALERT_MIN_INTERVAL_HOURS`. The script does not rely on Apps
 Script's own failure digest, which in practice never arrived.
 
+The script keeps the time of the last email in the Script Property
+`lastAlertAt`, and clears it after the next successful run. The first failure
+after a recovery therefore emails you at once. You never need to edit or delete
+this property.
+
 Sending mail needs one extra permission. After you paste a version that adds
 it, run `runNewsletterAutoLabel` once from the editor and approve the prompt.
 Until you do, triggered runs fail with an authorization error.
 
-The first backfill for a high-volume sender — a newspaper with years of
-archived mail — burns Gmail API quota faster than a low-volume one. If that
-matters to you, narrow `BACKFILL_QUERY_SUFFIX` to something like
-`in:anywhere newer_than:1y` before the first run.
-
-This script does not touch any existing native Gmail filter. Both can run at
-the same time, and an address covered by both is harmless — matching mail
-already carries the label, so the script does nothing to it.
+To test the email, rename the `SHEET_ID` Script Property, run
+`runNewsletterAutoLabel` from the editor, and check your inbox. Then rename the
+property back. The next successful run clears the throttle.
 
 ## Development
 
@@ -105,7 +114,7 @@ The script is one file with no build step. It is pasted verbatim into the Apps
 Script editor, so the file you edit is the file that runs.
 
 ```bash
-npm test      # 85 unit tests via node --test, zero dependencies
+npm test      # 88 unit tests via node --test, zero dependencies
 npm run check # syntax-only parse of the .gs file
 ```
 
