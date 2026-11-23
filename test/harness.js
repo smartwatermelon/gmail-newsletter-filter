@@ -15,7 +15,7 @@
  * that is tested. There is no build step and no generated artifact.
  *
  * Note: only `function` declarations land on the sandbox object. Top-level
- * `const` (SHEET_ID, TARGET_LABEL_NAME, ...) is block-scoped to the script and
+ * `const` (TARGET_LABEL_NAME, ...) is block-scoped to the script and
  * is NOT reachable from tests. If a test needs one of those values, pass it in
  * as an argument rather than reaching for it here.
  */
@@ -48,7 +48,13 @@ function loadScript(stubs = {}) {
     ScriptApp: stubs.ScriptApp || trap("ScriptApp"),
     LockService: stubs.LockService || trap("LockService"),
     MailApp: stubs.MailApp || trap("MailApp"),
-    PropertiesService: stubs.PropertiesService || trap("PropertiesService"),
+    // A test that fakes the Sheet needs a SHEET_ID to open it by, so it gets
+    // one by default. Every other test keeps the trap.
+    PropertiesService:
+      stubs.PropertiesService ||
+      (stubs.SpreadsheetApp
+        ? fakeScriptProperties({ SHEET_ID: "test-sheet-id" })
+        : trap("PropertiesService")),
     Session: stubs.Session || trap("Session"),
 
     ...stubs,
@@ -133,4 +139,27 @@ function fakeSpreadsheetApp(
   };
 }
 
-module.exports = { loadScript, fakeSpreadsheetApp, SCRIPT_PATH };
+/**
+ * Minimal fake of PropertiesService.getScriptProperties().
+ *
+ * @param {Object<string,string>} values initial properties; mutated by
+ *   setProperty so assertions can read it.
+ */
+function fakeScriptProperties(values = {}) {
+  return {
+    __values: values,
+    getScriptProperties: () => ({
+      getProperty: (k) => (k in values ? values[k] : null),
+      setProperty: (k, v) => {
+        values[k] = String(v);
+      },
+    }),
+  };
+}
+
+module.exports = {
+  loadScript,
+  fakeSpreadsheetApp,
+  fakeScriptProperties,
+  SCRIPT_PATH,
+};

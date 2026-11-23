@@ -4,14 +4,8 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { loadScript } = require("./harness");
 
-// The placeholder guard. SHEET_ID ships as PUT_YOUR_SHEET_ID_HERE and is meant
-// to stay that way in the repo, so the failure mode this catches is a real one:
-// paste the file, skip step 3 of the setup, and run setup(). Without the guard
-// SpreadsheetApp.openById() throws something about a missing document, which
-// does not point at the actual mistake.
-//
-// This takes the id as an argument rather than reading the global, because
-// top-level const is not reachable from the sandbox. See test/harness.js.
+// The SHEET_ID guard catches a real mistake: skipping setup step 3.
+// Without it, openById() fails with an error that does not name the step.
 test("isConfiguredSheetId_", async (t) => {
   const { isConfiguredSheetId_ } = loadScript();
 
@@ -75,5 +69,22 @@ test("labelFromKnownSenders_ refuses a missing target label", async (t) => {
     const { labelFromKnownSenders_ } = loadScript();
     assert.doesNotThrow(() => labelFromKnownSenders_(undefined));
     assert.doesNotThrow(() => labelFromKnownSenders_(""));
+  });
+});
+
+test("assertConfigured_ reads SHEET_ID from Script Properties", async (t) => {
+  const { fakeScriptProperties } = require("./harness");
+
+  await t.test("throws a clear error when the property is unset", () => {
+    const ctx = loadScript({ PropertiesService: fakeScriptProperties({}) });
+    assert.throws(() => ctx.assertConfigured_(), /Script Properties/);
+  });
+
+  await t.test("passes when the property holds an id", () => {
+    const ctx = loadScript({
+      PropertiesService: fakeScriptProperties({ SHEET_ID: "1abcDEF" }),
+    });
+    assert.doesNotThrow(() => ctx.assertConfigured_());
+    assert.strictEqual(ctx.getSheetId_(), "1abcDEF");
   });
 });
