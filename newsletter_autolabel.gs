@@ -7,10 +7,13 @@
  *
  * Workflow:
  *   1. You get mail from a sender that should be labeled .Newsletters but
- *      isn't. You apply the Gmail label "to-be-filtered" to that message.
+ *      isn't. You apply the Gmail label ".to-be-filtered" to that message.
  *   2. This script runs on a timer. It finds messages tagged
- *      "to-be-filtered", pulls the sender address, adds it to the "Senders"
- *      sheet (if new), and removes the "to-be-filtered" tag.
+ *      ".to-be-filtered", pulls the sender address, adds it to the "Senders"
+ *      sheet (if new), and removes the ".to-be-filtered" tag.
+ *      To stop filtering a sender, tag one of their messages
+ *      ".remove-from-filter" instead. The next run deletes that sender's row
+ *      from the sheet and removes the tag. Mail already labeled stays put.
  *   3. On every run, for every address in the sheet, the script finds mail
  *      from that address anywhere (inbox, spam, trash) that does not yet
  *      have .Newsletters, and applies: add .Newsletters + CATEGORY_UPDATES,
@@ -28,7 +31,7 @@
  *   5. Run `setup` once from the editor (select it in the function dropdown,
  *      click Run). Approve the permission prompts. This creates the sheet
  *      header row and the 15-minute trigger.
- *   6. Done. From now on: tag a stray newsletter "to-be-filtered" and it
+ *   6. Done. From now on: tag a stray newsletter ".to-be-filtered" and it
  *      (and everything else from that sender) gets labeled within 15
  *      minutes.
  *
@@ -47,10 +50,12 @@
 // ---- CONFIG ----
 const SHEET_ID = 'PUT_YOUR_SHEET_ID_HERE';
 const SHEET_TAB_NAME = 'Senders';
-const TRIGGER_LABEL_NAME = 'to-be-filtered';
+const TRIGGER_LABEL_NAME = '.to-be-filtered';
+const REMOVAL_LABEL_NAME = '.remove-from-filter';
 const TARGET_LABEL_NAME = '.Newsletters';
 const BACKFILL_QUERY_SUFFIX = 'in:anywhere'; // add e.g. ' newer_than:2y' to cap history
 const MAX_MESSAGES_PER_ADDRESS_PER_RUN = 200; // safety cap per sender per run
+const MAX_REMOVALS_PER_RUN = 100; // removal requests examined per run; the rest wait
 
 /**
  * Fail loudly if SHEET_ID was never filled in.
@@ -109,11 +114,24 @@ function runNewsletterAutoLabel() {
     return;
   }
 
+  // Order matters. Removals run after additions, so a sender tagged with both
+  // labels in the same window ends up removed: removal is the more deliberate
+  // act. Removals run before pass 3, or this same run would relabel the
+  // sender's mail before the row is gone.
+  //
+  // A removal failure is logged and the run goes on. Removal is the newest
+  // and least-used pass; it must not be able to stop labelling for every
+  // other sender.
   processQueue_(targetLabelId);
+  try {
+    processRemovals_();
+  } catch (e) {
+    Logger.log('ERROR: removal pass failed; continuing with labelling: %s', e);
+  }
   labelFromKnownSenders_(targetLabelId);
 }
 
-// Step 1: pick up messages tagged "to-be-filtered", learn their senders.
+// Pass 1: pick up messages tagged ".to-be-filtered", learn their senders.
 function processQueue_(targetLabelId) {
   const triggerLabelId = getLabelIdByName_(TRIGGER_LABEL_NAME);
   if (!triggerLabelId) {
@@ -155,7 +173,89 @@ function processQueue_(targetLabelId) {
   } while (pageToken);
 }
 
-// Step 2: for every known sender, label matching mail that isn't labeled yet.
+// Pass 2: pick up messages tagged ".remove-from-filter", forget their senders.
+//
+// Only the Sheet row goes. Mail already labelled .Newsletters stays as it is:
+// this stops future labelling, it does not undo past labelling.
+function processRemovals_() {
+  const removalLabelId = getLabelIdByName_(REMOVAL_LABEL_NAME);
+  if (!removalLabelId) {
+    // Logged, not thrown: a missing removal label must not stop the add and
+    // apply passes, which do not depend on it.
+    Logger.log('ERROR: label "%s" not found; skipping removals.', REMOVAL_LABEL_NAME);
+    return;
+  }
+
+  // Phase 1: collect from Gmail. No sheet access here, so no row index is
+  // held across the (slow) Gmail calls.
+  //
+  // Capped like the sender pass, so a large backlog of requests cannot run
+  // the execution into the ~6 minute limit before any label is cleared. That
+  // would repeat on every run. Requests over the cap wait for the next run.
+  const toClear = [];
+  const addresses = new Set();
+  let examined = 0;
+  let pageToken;
+  do {
+    const resp = Gmail.Users.Messages.list('me', {
+      labelIds: [removalLabelId],
+      maxResults: 100,
+      pageToken: pageToken,
+    });
+    (resp.messages || []).forEach(m => {
+      if (examined >= MAX_REMOVALS_PER_RUN) return;
+      examined++;
+      const full = Gmail.Users.Messages.get('me', m.id, { format: 'metadata', metadataHeaders: ['From'] });
+      const fromHeader = (full.payload.headers.find(h => h.name === 'From') || {}).value || '';
+      const address = extractAddress_(fromHeader);
+      if (!address) {
+        // Same rule as processQueue_: keep the label so the request stays
+        // visible as unprocessed instead of being silently dropped.
+        Logger.log('SKIP: could not extract an address from From header %s', JSON.stringify(fromHeader));
+        return;
+      }
+      addresses.add(address);
+      toClear.push(m.id);
+    });
+    pageToken = shouldContinuePaging_(examined, MAX_REMOVALS_PER_RUN, resp.nextPageToken)
+      ? resp.nextPageToken
+      : undefined;
+  } while (pageToken);
+
+  if (toClear.length === 0) return;
+
+  // Phase 2: one read of the sheet, then the deletes, with no Gmail call in
+  // between, under the script lock. Deletes are by row index, so unlike the
+  // rest of this script they are NOT idempotent: two overlapping runs that
+  // both read rows [5, 2] would each delete row 5, and the second delete
+  // would remove a different sender. The lock makes the second run read the
+  // sheet after the first has finished.
+  //
+  // Any failure here is logged and the labels are left in place, so the
+  // request is retried next run. It is not thrown: a stuck removal must not
+  // stop pass 3 from labelling everyone else's mail.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30 * 1000)) {
+    Logger.log('SKIP: could not get the script lock; removals retry next run.');
+    return;
+  }
+  try {
+    removeSenders_(addresses);
+  } catch (e) {
+    Logger.log('ERROR: removing senders failed; removals retry next run: %s', e);
+    return;
+  } finally {
+    lock.releaseLock();
+  }
+
+  // Phase 3: clear the label. A sender that was not in the sheet still gets
+  // the label cleared; there is nothing left to do for that request.
+  toClear.forEach(id => {
+    Gmail.Users.Messages.modify({ removeLabelIds: [removalLabelId] }, 'me', id);
+  });
+}
+
+// Pass 3: for every known sender, label matching mail that isn't labeled yet.
 function labelFromKnownSenders_(targetLabelId) {
   // The caller checks this and returns early, so this is defensive. It stays
   // because of the specific damage a null id would do: labelIds.indexOf(null)
@@ -231,7 +331,7 @@ function normalizeAddressPadding_(value) {
  *
  * Deliberately narrower than RFC 5321, which legitimately permits `{`, `}`,
  * `*` and `-` in a local part. The consequence of accepting a bad value here
- * is mail being archived (pass 2 removes INBOX from whatever the query
+ * is mail being archived (pass 3 removes INBOX from whatever the query
  * matches), so this errs toward rejection: a real address wrongly rejected
  * costs one unfiltered newsletter, which is recoverable and visible.
  * ASCII-only by construction, which also excludes fullwidth confusables,
@@ -298,6 +398,32 @@ function shouldContinuePaging_(fetched, cap, nextPageToken) {
 }
 
 /**
+ * Sheet row numbers whose address is in `addresses`, highest first.
+ *
+ * @param {Array<Array<*>>} values column A from row 2 down, as getValues()
+ *   returns it.
+ * @param {Set<string>} addresses normalised addresses to remove.
+ * @returns {number[]} 1-based sheet row numbers, descending, so deleting them
+ *   in order never shifts a row still waiting to be deleted.
+ *
+ * Every matching row is returned, not the first: the sheet is hand-editable
+ * and can hold the same sender twice, or once padded and once not. A row
+ * left behind would keep the sender filtered. Cells are matched with the same
+ * validate-then-normalise rule readKnownSenders_ uses, so "what counts as this
+ * sender" has one definition.
+ */
+function findSenderRows_(values, addresses) {
+  const rows = [];
+  values.forEach((row, i) => {
+    const raw = String(row[0] || '');
+    if (isValidSenderAddress_(raw) && addresses.has(normalizeAddressPadding_(raw))) {
+      rows.push(i + 2); // values[0] is sheet row 2
+    }
+  });
+  return rows.reverse();
+}
+
+/**
  * True if SHEET_ID has actually been filled in.
  *
  * The file ships with the placeholder and is expected to keep it in the repo,
@@ -340,6 +466,23 @@ function appendSender_(address) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
   const sheet = ss.getSheetByName(SHEET_TAB_NAME);
   sheet.appendRow([address, new Date()]);
+}
+
+function removeSenders_(addresses) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_TAB_NAME);
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return;
+  const values = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  const rows = findSenderRows_(values, addresses);
+  if (rows.length === 0) return;
+  // Sheets refuses to delete every non-frozen row. That happens only when the
+  // sheet has been trimmed to its content and every data row is going, so
+  // add one spare empty row first.
+  if (sheet.getMaxRows() - rows.length <= sheet.getFrozenRows()) {
+    sheet.insertRowAfter(sheet.getMaxRows());
+  }
+  rows.forEach(r => sheet.deleteRow(r));
 }
 
 function getLabelIdByName_(name) {

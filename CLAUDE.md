@@ -25,7 +25,7 @@ checking it exists first.
 ## Commands
 
 ```bash
-npm test     # node --test  — 49 unit tests, no deps
+npm test     # node --test  — 67 unit tests, no deps
 npm run check  # syntax-only parse of the .gs file
 ```
 
@@ -44,15 +44,15 @@ Note the bare `node --test` with no path argument. Passing the directory as
 `node --test test/` works on Node 20 but fails on Node 22+ with
 `Cannot find module '.../test'` — the argument is resolved as a module to run,
 not a directory to scan. Bare `--test` uses Node's own test-file discovery and
-finds all 49 tests on Node 20, 22, and 24. A glob like `test/*.test.js` is also
-wrong: it silently reports 38.
+finds every test file on Node 20, 22, and 24. A glob like `test/*.test.js` is also
+wrong: it silently reports fewer tests than bare `--test` does.
 
 ## How the tests reach a non-module
 
 `.gs` has no exports and no `require` — it is pasted verbatim into the Apps
 Script editor and runs there against globals that do not exist locally.
 `test/harness.js` therefore reads the real file and evaluates it in a `vm`
-context with `Gmail`, `SpreadsheetApp`, `ScriptApp`, and `Logger` stubbed.
+context with `Gmail`, `SpreadsheetApp`, `ScriptApp`, `LockService`, and `Logger` stubbed.
 
 The property this buys, and the reason to keep it: **the file you edit is the
 file that runs is the file that is tested.** There is no build step and no
@@ -80,32 +80,49 @@ triggers. Preserve that property when editing either function.
 
 ## Architecture
 
-`runNewsletterAutoLabel()` is the trigger entry point and runs two passes in order:
+`runNewsletterAutoLabel()` is the trigger entry point and runs three passes in order:
 
 1. **`processQueue_()` — learn senders.** Finds messages the user tagged with the
-   `to-be-filtered` label, reads the `From` header, appends new addresses to the
+   `.to-be-filtered` label, reads the `From` header, appends new addresses to the
    Sheet, and strips the trigger label. This is the human input channel: tagging a
    message is how a user "adds a filter rule."
-2. **`labelFromKnownSenders_()` — apply.** For every address in the Sheet, finds
+2. **`processRemovals_()` — forget senders.** Finds messages tagged
+   `.remove-from-filter`, deletes every Sheet row for that sender, and strips the
+   label. It does not unlabel past mail; it only stops future labelling.
+3. **`labelFromKnownSenders_()` — apply.** For every address in the Sheet, finds
    mail from that sender `in:anywhere` lacking the target label and applies
    `.Newsletters` + `CATEGORY_UPDATES` while removing `INBOX` + `SPAM`.
 
-The two-pass ordering is deliberate and load-bearing: pass 1 removes the trigger
-label without labeling the message, because pass 2 in the *same run* catches it
+The ordering is deliberate and load-bearing. Pass 1 removes the trigger
+label without labeling the message, because pass 3 in the *same run* catches it
 along with the sender's entire history. That is also why there is no separate
-backfill routine — pass 2 is simultaneously the steady-state path and the
-one-time backfill for a newly added sender.
+backfill routine — pass 3 is simultaneously the steady-state path and the
+one-time backfill for a newly added sender. Pass 2 must come before pass 3, or
+the same run relabels the sender being removed; it comes after pass 1, so a
+sender tagged with both labels ends up removed.
+
+**`processRemovals_` collects from Gmail first, then reads and deletes Sheet
+rows in one step with no Gmail call in between.** Runs overlap, so a row index
+held across slow API calls could point at a different sender by the time it is
+used. `findSenderRows_` returns rows highest first so each delete leaves the
+remaining indexes valid. The read and the deletes run under
+`LockService.getScriptLock()`: deletes by row index are the one operation in
+this script that is not idempotent, so "overlap is harmless" does not cover
+them. A failure there is logged, not thrown, and `runNewsletterAutoLabel`
+also wraps the whole pass in a try/catch, so pass 3 still runs.
+`MAX_REMOVALS_PER_RUN` caps requests examined per run for the same reason
+the per-sender cap exists.
 
 **The file is split into a pure section and an I/O section.** Everything under
 `// ---- pure logic (unit-tested; see test/) ----` touches no API and is covered
 by tests: `normalizeAddressPadding_`, `isValidSenderAddress_`, `extractAddress_`, `buildSenderQuery_`,
-`shouldContinuePaging_`, `isConfiguredSheetId_`. The functions below it are thin wrappers that call
+`shouldContinuePaging_`, `findSenderRows_`, `isConfiguredSheetId_`. The functions below it are thin wrappers that call
 those. Keep new logic on the pure side of that line wherever it can go there.
 
 **`extractAddress_` returns `null` on anything malformed, and callers must
 handle it.** It is deliberately stricter than RFC 5322: whatever it returns is
 interpolated into a Gmail `from:"..."` query, so a value containing a quote
-could break out of the clause and match unintended mail — which pass 2 would
+could break out of the clause and match unintended mail — which pass 3 would
 then archive and relabel. `isValidSenderAddress_` also filters rows read from
 the Sheet, because the Sheet is hand-editable and junk can arrive without ever
 passing through `extractAddress_`. `buildSenderQuery_` throws rather than
@@ -132,7 +149,7 @@ working and every message from every known sender is modified again on every
 run, with `null` in `addLabelIds` — pulling mail out of the inbox on a loop.
 
 **Two label ID spaces coexist in the same `labelIds` array, and this is correct.**
-User labels (`.Newsletters`, `to-be-filtered`) have opaque IDs that must be
+User labels (`.Newsletters`, `.to-be-filtered`, `.remove-from-filter`) have opaque IDs that must be
 resolved by name through `getLabelIdByName_()`. System labels (`INBOX`, `SPAM`,
 `CATEGORY_UPDATES`) *are* their own IDs and are correctly hardcoded as string
 literals. Do not "normalize" the hardcoded ones into name lookups — the lookup
@@ -161,7 +178,8 @@ IDs, label semantics, and quota accounting differ. Do not mix them in one code p
 - **Runs overlap.** The script is not re-entrant-safe; a slow run can still be
   going when the next trigger fires. Operations are written to be idempotent
   (already-labeled messages are skipped, known addresses are not re-appended) so
-  overlap is harmless rather than prevented.
+  overlap is harmless rather than prevented. The one exception is Sheet row
+  deletion in `processRemovals_`, which is locked instead (see Architecture).
 - `SHEET_ID` is a placeholder (`PUT_YOUR_SHEET_ID_HERE`) and is expected to stay
   that way in the repo. Do not commit a real Sheet ID.
 
